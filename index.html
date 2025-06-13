@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Destiny 2 Connections Game</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            touch-action: manipulation; /* Prevents double-tap zoom on mobile */
+        }
+        #game-grid {
+            /* This will help the grid container resize smoothly */
+            transition: height 0.6s ease-in-out;
+        }
+        .grid-item {
+            transition: transform 0.2s ease-in-out, background-color 0.2s ease-in-out, color 0.2s ease-in-out, opacity 0.5s;
+            will-change: transform, opacity;
+        }
+        .grid-item.selected {
+            transform: scale(1.05);
+            background-color: #5a5a5a;
+            color: white;
+        }
+        .grid-item.shake {
+            animation: shake 0.5s ease-in-out;
+        }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+        .solved-group {
+            opacity: 0;
+            transform: translateY(20px);
+            animation: fadeIn 0.5s forwards;
+        }
+        @keyframes fadeIn {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        /* Animation for when a word is correctly grouped */
+        .grid-item.fade-out-solved {
+            animation: fadeOut 0.5s forwards;
+        }
+        @keyframes fadeOut {
+            to {
+                opacity: 0;
+                transform: scale(0.9);
+            }
+        }
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 50;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+        }
+        .modal-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .modal-content {
+            background: white;
+            padding: 2rem;
+            border-radius: 0.75rem;
+            max-width: 500px;
+            width: 90%;
+            text-align: center;
+            transform: scale(0.95);
+            transition: transform 0.3s ease;
+        }
+        .modal-overlay.active .modal-content {
+            transform: scale(1);
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+    <div class="container mx-auto max-w-2xl p-4 sm:p-6 flex flex-col min-h-screen justify-center">
+
+        <!-- Header -->
+        <header class="text-center mb-4">
+            <h1 class="text-3xl sm:text-4xl font-bold">Destiny 2 Connections</h1>
+            <p class="text-slate-600 mt-1 text-sm sm:text-base">Create four groups of four!</p>
+        </header>
+        
+        <!-- Solved Groups Container -->
+        <div id="solved-groups-container" class="space-y-2 mb-4"></div>
+
+        <!-- Game Grid -->
+        <div id="game-grid" class="grid grid-cols-4 gap-2 sm:gap-3 mb-4">
+            <!-- Words will be injected here by JavaScript -->
+        </div>
+
+        <!-- Message Area -->
+        <div id="message-area" class="text-center h-6 mb-4 font-medium text-slate-600"></div>
+
+        <!-- Mistakes Counter -->
+        <div class="flex justify-center items-center mb-6">
+            <span class="mr-3 text-slate-600">Mistakes remaining:</span>
+            <div id="mistakes-counter" class="flex space-x-2">
+                <!-- Circles will be injected here by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex justify-center space-x-2 sm:space-x-4">
+            <button id="shuffle-button" class="px-4 py-2 text-sm sm:text-base sm:px-5 bg-white border border-slate-300 rounded-full font-semibold hover:bg-slate-100 transition-colors">Shuffle</button>
+            <button id="deselect-all-button" class="px-4 py-2 text-sm sm:text-base sm:px-5 bg-white border border-slate-300 rounded-full font-semibold hover:bg-slate-100 transition-colors">Deselect all</button>
+            <button id="submit-button" class="px-4 py-2 text-sm sm:text-base sm:px-5 bg-slate-800 text-white rounded-full font-semibold hover:bg-slate-700 transition-colors disabled:bg-slate-400 disabled:cursor-not-allowed">Submit</button>
+        </div>
+    </div>
+
+    <!-- Results Modal -->
+    <div id="results-modal" class="modal-overlay">
+        <div class="modal-content">
+            <h2 id="modal-title" class="text-2xl font-bold mb-2"></h2>
+            <p id="modal-subtitle" class="text-slate-600 mb-4"></p>
+            <div id="modal-grid" class="grid grid-cols-4 gap-1 text-xs mb-4"></div>
+            <button id="play-again-button" class="w-full mt-4 px-5 py-2 bg-slate-800 text-white rounded-full font-semibold hover:bg-slate-700 transition-colors">Play Again</button>
+        </div>
+    </div>
+
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- DOM ELEMENTS ---
+            const grid = document.getElementById('game-grid');
+            const mistakesCounter = document.getElementById('mistakes-counter');
+            const submitButton = document.getElementById('submit-button');
+            const shuffleButton = document.getElementById('shuffle-button');
+            const deselectAllButton = document.getElementById('deselect-all-button');
+            const messageArea = document.getElementById('message-area');
+            const solvedGroupsContainer = document.getElementById('solved-groups-container');
+            const resultsModal = document.getElementById('results-modal');
+            const modalTitle = document.getElementById('modal-title');
+            const modalSubtitle = document.getElementById('modal-subtitle');
+            const modalGrid = document.getElementById('modal-grid');
+            const playAgainButton = document.getElementById('play-again-button');
+            
+            // --- GAME STATE ---
+            let selectedWords = [];
+            let mistakesRemaining = 4;
+            let solvedGroups = 0;
+            let currentPuzzle;
+            let puzzles = []; // Will be fetched
+
+            // --- GROUP COLORS ---
+            const GROUP_COLORS = {
+                0: { bg: 'bg-yellow-200', border: 'border-yellow-300' }, // Easiest
+                1: { bg: 'bg-green-200', border: 'border-green-300' },
+                2: { bg: 'bg-blue-200', border: 'border-blue-300' },
+                3: { bg: 'bg-purple-200', border: 'border-purple-300' } // Hardest
+            };
+
+            // --- FETCH AND INITIALIZE GAME ---
+            async function fetchPuzzles() {
+                try {
+                    // --- USER-CURATED & VERIFIED PUZZLE SET ---
+                    puzzles = [
+                        { // Puzzle 1
+                            groups: [
+                                { connection: "'King's Fall' Raid Weapons", words: ["Smite of Merain", "Defiance of Yasmin", "Doom of Chelchis", "Qullim's Terminus"] },
+                                { connection: "Tex Mechanica Weapons", words: ["The Last Word", "The Huckleberry", "Dead Man's Tale", "The Chaperone"] },
+                                { connection: "Can roll 'One-Two Punch'", words: ["Wastelander M5", "Matador 64", "A Sudden Death", "IKELOS_SG_v1.0.3"] },
+                                { connection: "Celestial Body Themed Names", words: ["Polaris Lance", "Stars in Shadow", "Distant Star", "Sunshot"] }
+                            ]
+                        },
+                        { // Puzzle 2
+                            groups: [
+                                { connection: "'Vault of Glass' Legendary Weapons", words: ["Fatebringer", "Praedyth's Revenge", "Vision of Confluence", "Hezen Vengeance"] },
+                                { connection: "'Season of the Risen' Weapons", words: ["Explosive Personality", "Under Your Skin", "Sweet Sorrow", "Recurrent Impact"] },
+                                { connection: "Can Roll 'Voltshot'", words: ["Tarnished Mettle", "Brigand's Law", "Phyllotactic Spiral", "Iterative Loop"] },
+                                { connection: "Cabal Themed Weapons", words: ["Legend of Acrius", "Skyburner's Oath", "Grand Overture", "Heir Apparent"] }
+                            ]
+                        },
+                        { // Puzzle 3
+                            groups: [
+                                { connection: "Weapons of Sorrow", words: ["Thorn", "Osteo Striga", "Necrochasm", "Malfeasance"] },
+                                { connection: "Aggressive Frame Pulse Rifles", words: ["Sacred Provenance", "Insidious", "Blast Furnace", "Go Figure"] },
+                                { connection: "'Season of the Wish' Weapons", words: ["Supercluster", "Scalar Potential", "Appetence", "Doomed Petitioner"] },
+                                { connection: "Exotics that fire tracking projectiles", words: ["Gjallarhorn", "Eyes of Tomorrow", "The Wardcliff Coil", "Truth"] }
+                            ]
+                        },
+                        { // Puzzle 4
+                            groups: [
+                                { connection: "'Brave' Arsenal Weapons", words: ["Forbearance", "Luna's Howl", "Hammerhead", "Edge Transit"] },
+                                { connection: "Exotic Bows", words: ["Le Monarque", "Trinity Ghoul", "Wish-Ender", "Hierarchy of Needs"] },
+                                { connection: "'Season of Defiance' Weapons", words: ["Perpetualis", "Regnant", "Royal Executioner", "Raconteur"] },
+                                { connection: "Legal/Judicial Themed Names", words: ["Judgement", "The Verdict", "Hung Jury", "Motion to Compel"] }
+                            ]
+                        },
+                        { // Puzzle 5
+                            groups: [
+                                { connection: "Iconic 'Forsaken' Era Pinnacles", words: ["Mountaintop", "Wendigo GL3", "Breakneck", "21% Delirium"] },
+                                { connection: "Suros Foundry Weapons", words: ["Cantata-57", "Staccato-46", "Suros Regime", "Syncopation-53"] },
+                                { connection: "Weapons with Bird Names", words: ["The Hawkmoon", "The Falcon's Chase", "The Eagle's Cry", "The Crow's Eye"] },
+                                { connection: "'Season of the Lost' Weapons", words: ["Vulpecula", "Wolftone Draw", "Chrysura Melo", "Canis Major"] }
+                            ]
+                        },
+                        { // Puzzle 6
+                            groups: [
+                                { connection: "Omolon Foundry Weapons", words: ["Hung Jury SR4", "Positive Outlook", "Snorri FR5", "Aurvandil FR6"] },
+                                { connection: "Character's Signature Weapons", words: ["Ace of Spades", "The Chaperone", "Perfect Paradox", "Elsie's Rifle"] },
+                                { connection: "Lightweight Frame Pulse Rifles", words: ["Chattering Bone", "Ogma PR6", "Outlast", "Nightshade"] },
+                                { connection: "'Season of the Hunt' Weapons", words: ["Friction Fire", "Deafening Whisper", "Corsair's Wrath", "Royal Chase"] }
+                            ]
+                        },
+                        { // Puzzle 7
+                            groups: [
+                                { connection: "Game-Breakingly Infamous", words: ["Telesto", "Lord of Wolves", "Prometheus Lens", "Aggressive Frame Ammit"] },
+                                { connection: "'Deep Stone Crypt' Raid Weapons", words: ["Trustee", "Posterity", "Heritage", "Commemoration"] },
+                                { connection: "Gambit Prime Weapons", words: ["Spare Rations", "Bug-Out Bag", "Gnawing Hunger", "Doomsday"] },
+                                { connection: "Acquired from the Monument to Lost Lights", words: ["Witherhoard", "Eriana's Vow", "Izanagi's Burden", "Anarchy"] }
+                            ]
+                        },
+                        { // Puzzle 8
+                            groups: [
+                                { connection: "'Garden of Salvation' Weapons", words: ["Sacred Provenance", "Reckless Oracle", "Zealot's Reward", "Ancient Gospel"] },
+                                { connection: "Can roll 'Target Lock'", words: ["The Immortal", "Rufus's Fury", "Qua Xaphan V", "Retrofit Escapade"] },
+                                { connection: "Exotic Sidearms", words: ["Trespasser", "Forerunner", "Devil's Ruin", "Rat King"] },
+                                { connection: "Names related to sleep/dreams", words: ["Sleepless", "Waking Vigil", "Dream Breaker", "Night Terror"] }
+                            ]
+                        },
+                        { // Puzzle 9
+                            groups: [
+                                { connection: "'Vow of the Disciple' Weapons", words: ["Submission", "Deliverance", "Forbearance", "Cataclysmic"] },
+                                { connection: "Adaptive Frame Pulse Rifles", words: ["Last Perdition", "Bygones", "Chattering Bone", "BxR-55 Battler"] },
+                                { connection: "Exotic Heavy Weapons", words: ["Deathbringer", "Xenophage", "Leviathan's Breath", "Divinity"] },
+                                { connection: "Iron Banner Weapons", words: ["The Forward Path", "The Wizened Rebuke", "The Fool's Remedy", "The Guiding Sight"] }
+                            ]
+                        },
+                        { // Puzzle 10
+                            groups: [
+                                { connection: "Weapons with a Hive/Bone Aesthetic", words: ["Deathbringer", "Whisper of the Worm", "Parasite", "Thorn"] },
+                                { connection: "Veist Foundry Weapons", words: ["Funnelweb", "Reed's Regret", "Krait", "Jararaca-3sr"] },
+                                { connection: "Pinnacle Weapons", words: ["Randy's Throwing Knife", "Gnawing Hunger", "Blast Furnace", "The Recluse"] },
+                                { connection: "Can Roll 'Killing Tally'", words: ["Commemoration", "Corrective Measure", "Hammerhead", "Unwavering Duty"] }
+                            ]
+                        },
+                        { // Puzzle 11
+                            groups: [
+                                { connection: "'Black Armory' Weapons", words: ["Hammerhead", "Kindled Orchid", "Jotunn", "Izanagi's Burden"] },
+                                { connection: "Weapons from 'Prophecy' Dungeon", words: ["A Sudden Death", "The Last Breath", "Judgement", "Darkest Before"] },
+                                { connection: "Vanguard Themed Weapons", words: ["The Comedian", "The Hothead", "Royal Entry", "Punching Out"] },
+                                { connection: "Ritual Weapons", words: ["Ascendancy", "Adored", "Salvager's Salvo", "Null Composure"] }
+                            ]
+                        },
+                        { // Puzzle 12
+                            groups: [
+                                { connection: "Can Roll 'Incandescent'", words: ["CALUS Mini-Tool", "Ammit AR2", "Strident Whistle", "Zaouli's Bane"] },
+                                { connection: "'Last Wish' Raid Weapons", words: ["Age-Old Bond", "Transfiguration", "Nation of Beasts", "Techeun Force"] },
+                                { connection: "Exotic Sniper Rifles", words: ["Whisper of the Worm", "D.A.R.C.I.", "Cloudstrike", "Izanagi's Burden"] },
+                                { connection: "'Season of the Splicer' Weapons", words: ["Ignition Code", "Chroma Rush", "Gridskipper", "Sojourner's Tale"] }
+                            ]
+                        },
+                        { // Puzzle 13
+                            groups: [
+                                { connection: "Aggressive Frame Shotguns", words: ["Imperial Decree", "Felwinter's Lie", "Found Verdict", "A Sudden Death"] },
+                                { connection: "Exotic Trace Rifles", words: ["Coldheart", "Wavesplitter", "Prometheus Lens", "Divinity"] },
+                                { connection: "'The Menagerie' Weapons", words: ["Austringer", "Beloved", "Imperial Decree", "Drang (Baroque)"] },
+                                { connection: "Weapons from the original Red War campaign", words: ["Origin Story", "Nameless Midnight", "The Last Dance", "Hawthorne's Field-Forged Shotgun"] }
+                            ]
+                        },
+                        { // Puzzle 14
+                            groups: [
+                                { connection: "Can Roll 'Reconstruction'", words: ["Succession", "Trustee", "Heritage", "Commemoration"] },
+                                { connection: "'Shadowkeep' Moon Weapons", words: ["Loud Lullaby", "Tranquility", "Dream Breaker", "One Small Step"] },
+                                { connection: "Exotic Energy Weapons", words: ["Sunshot", "Graviton Lance", "Polaris Lance", "Trinity Ghoul"] },
+                                { connection: "'Season of the Dawn' Weapons", words: ["Perfect Paradox", "Martyr's Retribution", "Steelfeather Repeater", "Patron of Lost Causes"] }
+                            ]
+                        },
+                        { // Puzzle 15
+                            groups: [
+                                { connection: "Häkke Foundry Weapons", words: ["Lodbroc-C", "Enyo-D", "Perses-D", "Ragnhild-D"] },
+                                { connection: "Void Fusion Rifles", words: ["Telesto", "Null Composure", "Main Ingredient", "Iterative Loop"] },
+                                { connection: "Can Create 'Tangles' (Strand)", words: ["Quicksilver Storm", "Final Warning", "The Navigator", "The Call"] },
+                                { connection: "'Finality' Themed Weapon Names", words: ["The Last Word", "Final Warning", "The End", "Conditional Finality"] }
+                            ]
+                        },
+                        { // Puzzle 16
+                            groups: [
+                                { connection: "Stasis Exotic Weapons", words: ["Verglas Curve", "Salvation's Grip", "Ager's Scepter", "Wicked Implement"] },
+                                { connection: "Innate Anti-Champion", words: ["Arbalest", "The Lament", "Leviathan's Breath", "Eriana's Vow"] },
+                                { connection: "Required for a Catalyst/Quest Step", words: ["MIDA Mini-Tool", "Rose", "Izanagi's Burden", "Drang"] },
+                                { connection: "'Crucible' Themed Weapons", words: ["Riptide", "Stars in Shadow", "Frozen Orbit", "The Keening"] }
+                            ]
+                        },
+                        { // Puzzle 17
+                            groups: [
+                                { connection: "Arc Exotic Heavy Weapons", words: ["The Wardcliff Coil", "The Prospector", "Thunderlord", "Anarchy"] },
+                                { connection: "Named After Lore Characters", words: ["Felwinter's Lie", "Shayura's Wrath", "Aisha's Embrace", "Randy's Throwing Knife"] },
+                                { connection: "'Season of Plunder' Weapons", words: ["Tarnished Mettle", "Brigand's Law", "No Reprieve", "Blood Feud"] },
+                                { connection: "Weapons that require a kill to activate their main perk", words: ["Riskrunner", "Sunshot", "Graviton Lance", "The Huckleberry"] }
+                            ]
+                        },
+                        { // Puzzle 18
+                            groups: [
+                                { connection: "Sunset & Reissued Weapons", words: ["The Palindrome", "The Swarm", "Dire Promise", "Better Devils"] },
+                                { connection: "Unique Firing Mechanisms", words: ["Devil's Ruin", "Cryosthesia 77K", "Cerberus+1", "Grand Overture"] },
+                                { connection: "Exotic Glaives", words: ["Vexcalibur", "Edge of Action", "Edge of Concurrence", "Edge of Intent"] },
+                                { connection: "Can Roll 'Repulsor Brace'", words: ["Funnelweb", "The Enigma", "Taipan-4fr", "Unforgiven"] }
+                            ]
+                        },
+                        { // Puzzle 19
+                            groups: [
+                                { connection: "Dreaming City Weapons", words: ["Tigerspite", "Waking Vigil", "Sleepless", "Twilight Oath"] },
+                                { connection: "Exotics from 'Beyond Light'", words: ["No Time to Explain", "Cloudstrike", "Salvation's Grip", "Eyes of Tomorrow"] },
+                                { connection: "Rapid-Fire Frame Scout Rifles", words: ["Trustee", "Servant Leader", "Contingency Plan", "Randy's Throwing Knife"] },
+                                { connection: "Can roll with 'Firefly' or 'Dragonfly'", words: ["Fatebringer", "Hung Jury SR4", "Nation of Beasts", "Oxygen SR3"] }
+                            ]
+                        },
+                        { // Puzzle 20
+                            groups: [
+                                { connection: "Exotics Tied to 'The Witch Queen'", words: ["Osteo Striga", "Parasite", "Edge of Action", "Collective Obligation"] },
+                                { connection: "'Season of the Haunted' Weapons", words: ["Austringer", "Beloved", "CALUS Mini-Tool", "Nezarec's Whisper"] },
+                                { connection: "Legendary Hand Cannons", words: ["Austringer", "Eyasluna", "Fatebringer", "Midnight Coup"] },
+                                { connection: "Wave Frame Grenade Launchers", words: ["Forbearance", "Martyr's Retribution", "Harsh Language", "Dead Messenger"] }
+                            ]
+                        },
+                        { // Puzzle 21
+                            groups: [
+                                { connection: "Exotic Heavy Grenade Launchers", words: ["The Colony", "Anarchy", "Salvation's Grip", "Parasite"] },
+                                { connection: "Arc Exotic Weapons", words: ["Riskrunner", "Trinity Ghoul", "Thunderlord", "Anarchy"] },
+                                { connection: "'Grasp of Avarice' Dungeon Weapons", words: ["Eyasluna", "Matador 64", "1000-Yard Stare", "Hero of Ages"] },
+                                { connection: "Reprise a 'Black Armory' Theme", words: ["Forbearance", "Succession", "Blast Furnace", "Threat Level"] }
+                            ]
+                        },
+                        { // Puzzle 22
+                            groups: [
+                                { connection: "Exotic Hand Cannons", words: ["Ace of Spades", "Thorn", "Lumina", "Sunshot"] },
+                                { connection: "Original 'Leviathan' Raid Weapons", words: ["Midnight Coup", "Inaugural Address", "Conspirator", "Ghost Primus"] },
+                                { connection: "'Season of the Seraph' Weapons", words: ["Disparity", "Retrofit Escapade", "Judgment of Kelgorath", "Path of Least Resistance"] },
+                                { connection: "Exotics with Alternate Fire Modes", words: ["Dead Man's Tale", "Cryosthesia 77k", "Lord of Wolves", "Symmetry"] }
+                            ]
+                        },
+                        { // Puzzle 23
+                            groups: [
+                                { connection: "Exotic Rocket Launchers", words: ["Gjallarhorn", "Truth", "Deathbringer", "Eyes of Tomorrow"] },
+                                { connection: "IKELOS Weapons", words: ["IKELOS_SMG_v1.0.3", "IKELOS_SG_v1.0.3", "IKELOS_HC_v1.0.3", "IKELOS_SR_v1.0.3"] },
+                                { connection: "Weapons of the 'Nine'", words: ["The Long Walk", "The End", "A Sudden Death", "Motion to Compel"] },
+                                { connection: "High-Impact Frame Auto Rifles", words: ["False Promises", "Abyss Defiant", "Halfdan-D", "Age-Old Bond"] }
+                            ]
+                        },
+                        { // Puzzle 24
+                            groups: [
+                                { connection: "Exotics from 'Lightfall'", words: ["Quicksilver Storm", "Final Warning", "Winterbite", "Deterministic Chaos"] },
+                                { connection: "Can Roll 'Kinetic Tremors'", words: ["Hung Jury SR4", "Battle Scar", "Spare Rations", "Buzzard"] },
+                                { connection: "Lightweight Frame Bows", words: ["Arsenic Bite-4b", "Imperial Needle", "Whistler's Whim", "Tripwire Canary"] },
+                                { connection: "Vex Themed Weapons from 'Season of the Undying'", words: ["Optative", "Stochastic Variable", "Imperative", "Subjunctive"] }
+                            ]
+                        },
+                        { // Puzzle 25
+                            groups: [
+                                { connection: "Solar Exotic Fusion Rifles", words: ["Jotunn", "Vex Mythoclast", "One Thousand Voices", "Merciless"] },
+                                { connection: "Can Roll 'Destabilizing Rounds'", words: ["Nessa's Oblation", "Age-Old Bond", "Regnant", "Word of Crota"] },
+                                { connection: "Names that reference Norse Mythology", words: ["Jotunn", "Gjallarhorn", "Valkadyn", "Ragnhild-D"] },
+                                { connection: "Precision Frame Shotguns", words: ["Retold Tale", "Gunnora's Axe", "Prophet of Doom", "Matador 64"] }
+                            ]
+                        },
+                        { // Puzzle 26
+                            groups: [
+                                { connection: "Seventh Seraph Weapons", words: ["Seventh Seraph Carbine", "Seventh Seraph Officer Revolver", "Seventh Seraph SAW", "Seventh Seraph CQC-12"] },
+                                { connection: "Neomuna (Terminal Overload) Weapons", words: ["Circular Logic", "Basso Ostinato", "Synchronic Roulette", "Dimensional Hypotrochoid"] },
+                                { connection: "Weapons tied to Elsie Bray (The Exo Stranger)", words: ["The Lament", "No Time to Explain", "Polaris Lance", "BrayTech Werewolf"] },
+                                { connection: "180 RPM Hand Cannons", words: ["Posterity", "Trust", "IKELOS_HC_v1.0.2", "Malfeasance"] }
+                            ]
+                        },
+                        { // Puzzle 27
+                            groups: [
+                                { connection: "World Drop Pool Weapons", words: ["Harsh Language", "Ros Arago IV", "Crux Termination IV", "Psi Hermetic V"] },
+                                { connection: "Aggressive Frame Sniper Rifles", words: ["Succession", "Bite of the Fox", "Silicon Neuroma", "Volta Bracket"] },
+                                { connection: "Rapid-Fire Frame Fusion Rifles", words: ["Cartesian Coordinate", "Null Composure", "Riptide", "Iterative Loop"] },
+                                { connection: "Exotics that charge up a powerful secondary fire", words: ["Devil's Ruin", "Grand Overture", "Symmetry", "Lord of Wolves"] }
+                            ]
+                        },
+                        { // Puzzle 28
+                            groups: [
+                                { connection: "Trials of Osiris Weapons", words: ["The Messenger", "Eye of Sol", "Igneous Hammer", "Astral Horizon"] },
+                                { connection: "Weapons from 'Dares of Eternity'", words: ["Wastelander M5", "Pardon Our Dust", "Retraced Path", "BxR-55 Battler"] },
+                                { connection: "Kinetic Primary Weapons", words: ["Breakneck", "The Recluse", "Huckleberry", "Tigerspite"] },
+                                { connection: "Names that reference Music", words: ["Death Metal", "Deafening Whisper", "The Showrunner", "The Last Dance"] }
+                            ]
+                        },
+                        { // Puzzle 29
+                            groups: [
+                                { connection: "Can Roll 'Headstone'", words: ["Eyasluna", "Disparity", "Prolonged Engagement", "Syncopation-53"] },
+                                { connection: "Legendary Linear Fusion Rifles", words: ["Cataclysmic", "Taipan-4fr", "Reed's Regret", "Stormchaser"] },
+                                { connection: "Adaptive Frame Swords", words: ["Steel Sybil Z-14", "Eternity's Edge", "Just in Case", "Negative Space"] },
+                                { connection: "Fallen (Eliksni) Themed Weapons", words: ["Anarchy", "Lord of Wolves", "The Queenbreaker", "Trespasser"] }
+                            ]
+                        },
+                        { // Puzzle 30
+                            groups: [
+                                { connection: "Can Roll 'Chain Reaction'", words: ["Forbearance", "Salvager's Salvo", "Wendigo GL3", "Code Duello"] },
+                                { connection: "Precision Frame Hand Cannons (140 RPM)", words: ["Nation of Beasts", "Ward-Paced Carbine", "Zaouli's Bane", "The Palindrome"] },
+                                { connection: "Europa Weapons (Beyond Light destination)", words: ["High Albedo", "Coriolis Force", "Thermal Erosion", "Bonechiller"] },
+                                { connection: "Exotics with Intrinsic 'Anti-Barrier'", words: ["Eriana's Vow", "The Lament", "Arbalest", "Revision Zero"] }
+                            ]
+                        }
+                    ];
+                    initGame();
+                } catch (error) {
+                    console.error("Failed to load puzzles:", error);
+                    messageArea.textContent = "Error loading game. Please refresh.";
+                }
+            }
+
+            function initGame() {
+                // Reset state
+                selectedWords = [];
+                mistakesRemaining = 4;
+                solvedGroups = 0;
+                
+                // Choose a random puzzle
+                currentPuzzle = puzzles[Math.floor(Math.random() * puzzles.length)];
+                
+                // Clear UI
+                grid.innerHTML = '';
+                solvedGroupsContainer.innerHTML = '';
+                messageArea.textContent = '';
+                
+                // Get all words and shuffle them
+                const allWords = currentPuzzle.groups.flatMap(group => group.words);
+                shuffleArray(allWords);
+
+                // Populate grid
+                allWords.forEach(word => {
+                    const wordEl = document.createElement('div');
+                    wordEl.textContent = word;
+                    wordEl.className = 'grid-item h-16 sm:h-20 flex justify-center items-center text-center font-bold text-xs sm:text-base uppercase bg-slate-200 rounded-lg cursor-pointer select-none';
+                    wordEl.addEventListener('click', () => handleWordClick(wordEl));
+                    grid.appendChild(wordEl);
+                });
+
+                updateMistakesCounter();
+                updateSubmitButtonState();
+                resultsModal.classList.remove('active');
+            }
+            
+            // --- EVENT HANDLERS ---
+            function handleWordClick(wordEl) {
+                if (wordEl.classList.contains('solved')) return;
+                
+                const word = wordEl.textContent;
+                
+                if (selectedWords.includes(word)) {
+                    // Deselect
+                    selectedWords = selectedWords.filter(w => w !== word);
+                    wordEl.classList.remove('selected');
+                } else {
+                    // Select
+                    if (selectedWords.length < 4) {
+                        selectedWords.push(word);
+                        wordEl.classList.add('selected');
+                    }
+                }
+                updateSubmitButtonState();
+            }
+
+            function handleSubmit() {
+                if (selectedWords.length !== 4) return;
+
+                const foundGroup = findGroupForSelection(selectedWords);
+
+                if (foundGroup) {
+                    handleCorrectGuess(foundGroup);
+                } else {
+                    handleIncorrectGuess();
+                }
+            }
+            
+            function handleShuffle() {
+                const wordsToShuffle = Array.from(grid.children);
+            
+                // 1. FIRST: Get the initial positions
+                const initialPositions = new Map();
+                wordsToShuffle.forEach(el => {
+                    initialPositions.set(el, el.getBoundingClientRect());
+                });
+            
+                // 2. LAST: Shuffle the elements in the DOM and get their final positions
+                shuffleArray(wordsToShuffle);
+                wordsToShuffle.forEach(el => grid.appendChild(el));
+            
+                // 3. INVERT & PLAY: Animate the transition
+                wordsToShuffle.forEach(el => {
+                    const finalPos = el.getBoundingClientRect();
+                    const initialPos = initialPositions.get(el);
+            
+                    const deltaX = initialPos.left - finalPos.left;
+                    const deltaY = initialPos.top - finalPos.top;
+            
+                    if (deltaX !== 0 || deltaY !== 0) {
+                        el.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+                        el.style.transition = 'transform 0s';
+            
+                        requestAnimationFrame(() => {
+                            el.style.transition = 'transform 0.6s ease-in-out';
+                            el.style.transform = '';
+                        });
+                    }
+                });
+            }
+
+
+            function handleDeselectAll() {
+                selectedWords = [];
+                document.querySelectorAll('.grid-item.selected').forEach(el => el.classList.remove('selected'));
+                updateSubmitButtonState();
+            }
+
+            // --- GAME LOGIC ---
+            function findGroupForSelection(selection) {
+                return currentPuzzle.groups.find(group => {
+                    const groupWords = group.words;
+                    return selection.every(word => groupWords.includes(word)) && selection.length === groupWords.length;
+                });
+            }
+            
+            function handleCorrectGuess(group) {
+                solvedGroups++;
+                
+                const solvedEl = document.createElement('div');
+                const colors = GROUP_COLORS[solvedGroups - 1] || GROUP_COLORS[3];
+                solvedEl.className = `solved-group p-4 rounded-lg text-center ${colors.bg}`;
+                solvedEl.innerHTML = `
+                    <p class="font-bold uppercase">${group.connection}</p>
+                    <p class="font-medium uppercase">${group.words.join(', ')}</p>
+                `;
+                solvedGroupsContainer.appendChild(solvedEl);
+
+                const solvedWordElements = Array.from(document.querySelectorAll('.grid-item.selected'));
+                const remainingWordElements = Array.from(grid.children).filter(el => !el.classList.contains('selected'));
+                
+                const initialPositions = new Map();
+                remainingWordElements.forEach(el => {
+                    initialPositions.set(el, el.getBoundingClientRect());
+                });
+
+                solvedWordElements.forEach(el => {
+                    el.classList.remove('selected');
+                    el.classList.add('fade-out-solved');
+                });
+                
+                setTimeout(() => {
+                    solvedWordElements.forEach(el => el.remove());
+
+                    remainingWordElements.forEach(el => {
+                        const finalPos = el.getBoundingClientRect();
+                        const initialPos = initialPositions.get(el);
+                        
+                        const deltaX = initialPos.left - finalPos.left;
+                        const deltaY = initialPos.top - finalPos.top;
+
+                        if (Math.abs(deltaX) > 0.1 || Math.abs(deltaY) > 0.1) {
+                            el.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+                            el.style.transition = 'transform 0s';
+                            
+                            requestAnimationFrame(() => {
+                                el.style.transition = 'transform 0.6s ease-in-out';
+                                el.style.transform = '';
+                            });
+                        }
+                    });
+
+                    deselectAllButton.click();
+                    if (solvedGroups === 4) {
+                        endGame(true);
+                    }
+                }, 500);
+            }
+
+
+            function handleIncorrectGuess() {
+                mistakesRemaining--;
+                updateMistakesCounter();
+                messageArea.textContent = getIncorrectGuessMessage();
+
+                const selectedElements = document.querySelectorAll('.grid-item.selected');
+                selectedElements.forEach(el => el.classList.add('shake'));
+                
+                setTimeout(() => {
+                    selectedElements.forEach(el => el.classList.remove('shake'));
+                    messageArea.textContent = '';
+                    if (mistakesRemaining <= 0) {
+                        endGame(false);
+                    }
+                }, 800);
+            }
+
+            function getIncorrectGuessMessage() {
+                for (const group of currentPuzzle.groups) {
+                    const correctWordsInSelection = selectedWords.filter(word => group.words.includes(word));
+                    if (correctWordsInSelection.length === 3) {
+                        return "One away...";
+                    }
+                }
+                return "Not quite...";
+            }
+
+            function endGame(isWin) {
+                setTimeout(() => {
+                    modalTitle.textContent = isWin ? "Victory!" : "Wipe...";
+                    modalSubtitle.textContent = isWin ? "You found all the connections, Guardian." : "Ghost, prep for rez.";
+                    
+                    modalGrid.innerHTML = '';
+                    const solvedConnections = Array.from(solvedGroupsContainer.children);
+                    
+                    solvedConnections.forEach(conn => {
+                        const clone = conn.cloneNode(true);
+                        clone.classList.add('col-span-4');
+                        modalGrid.appendChild(clone);
+                    });
+
+                    currentPuzzle.groups.forEach((group, i) => {
+                        if (!isGroupSolved(group.connection)) {
+                            const groupEl = document.createElement('div');
+                            const colors = GROUP_COLORS[getUnsolvedGroupColorIndex()] || GROUP_COLORS[3];
+                            groupEl.className = `col-span-4 p-4 rounded-lg text-center ${colors.bg}`;
+                            groupEl.innerHTML = `
+                                <p class="font-bold uppercase">${group.connection}</p>
+                                <p class="font-medium uppercase">${group.words.join(', ')}</p>
+                            `;
+                            modalGrid.appendChild(groupEl);
+                        }
+                    });
+
+                    resultsModal.classList.add('active');
+                }, 500);
+            }
+
+            // --- UI UPDATES ---
+            function updateMistakesCounter() {
+                mistakesCounter.innerHTML = '';
+                for (let i = 0; i < 4; i++) {
+                    const circle = document.createElement('div');
+                    circle.className = `w-4 h-4 rounded-full ${i < mistakesRemaining ? 'bg-slate-800' : 'bg-slate-300'}`;
+                    mistakesCounter.appendChild(circle);
+                }
+            }
+
+            function updateSubmitButtonState() {
+                submitButton.disabled = selectedWords.length !== 4;
+            }
+
+            // --- UTILITY FUNCTIONS ---
+            function shuffleArray(array) {
+                for (let i = array.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [array[i], array[j]] = [array[j], array[i]];
+                }
+            }
+            
+            function isGroupSolved(connection) {
+                const solvedConnections = Array.from(solvedGroupsContainer.querySelectorAll('.font-bold'));
+                return solvedConnections.some(el => el.textContent === connection);
+            }
+            
+            let unsolvedColorIndex = 0;
+            function getUnsolvedGroupColorIndex() {
+                return solvedGroups + (unsolvedColorIndex++);
+            }
+
+            // --- EVENT LISTENERS ---
+            submitButton.addEventListener('click', handleSubmit);
+            shuffleButton.addEventListener('click', handleShuffle);
+            deselectAllButton.addEventListener('click', handleDeselectAll);
+            playAgainButton.addEventListener('click', () => {
+                resultsModal.classList.remove('active');
+                setTimeout(fetchPuzzles, 300);
+            });
+
+            // --- START ---
+            fetchPuzzles();
+        });
+    </script>
+
+</body>
+</html>
